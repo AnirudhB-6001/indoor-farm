@@ -2,7 +2,8 @@ from fastapi import FastAPI
 import paho.mqtt.client as mqtt
 import json
 from influxdb_client import InfluxDBClient, Point
-from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
+from fastapi.middleware.cors import CORSMiddleware  # Import CORS Middleware
 
 # ✅ Initialize FastAPI
 app = FastAPI()
@@ -30,23 +31,52 @@ MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
 MQTT_TOPIC = "sensor/data"
 
+# ✅ Store alerts in a list (latest 10 alerts)
+alerts_list = []
+
+# ✅ Define acceptable sensor ranges
+THRESHOLDS = {
+    "temperature": (18, 26),  
+    "humidity": (50, 70),  
+    "co2": (400, 1000),  
+    "light": (200, 800),  
+    "pH": (5.5, 6.5),  
+    "EC": (1.5, 2.5),  
+    "water_level": (10, 90),  
+    "water_temp": (18, 25),  
+}
+
 # ✅ Callback when MQTT receives data
 def on_message(client, userdata, msg):
+    global alerts_list
     payload = json.loads(msg.payload.decode())
     print(f"Received Data: {payload}")
 
-    # Store data in InfluxDB
-    point = Point("sensor_reading") \
-        .tag("location", "indoor_farm_1") \
-        .field("temperature", payload["temperature"]) \
-        .field("humidity", payload["humidity"]) \
-        .field("co2", payload["co2"]) \
-        .field("light", payload["light"]) \
-        .field("pH", payload["pH"]) \
-        .field("EC", payload["EC"]) \
-        .field("water_level", payload["water_level"]) \
-        .field("water_temp", payload["water_temp"])
-    
+    # Store sensor values in InfluxDB
+    point = Point("sensor_reading").tag("location", "indoor_farm_1")
+
+    # Generate alerts based on thresholds
+    alert_messages = []
+    for key, value in payload.items():
+        point.field(key, value)
+
+        # Check if value is out of range
+        if key in THRESHOLDS:
+            min_val, max_val = THRESHOLDS[key]
+            if value < min_val or value > max_val:
+                alert_messages.append(f"⚠️ {key.capitalize()} out of range: {value}")
+
+    # Store alert messages in `alerts_list`
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if alert_messages:
+        alerts_list.insert(0, {"timestamp": timestamp, "alerts": alert_messages})
+    else:
+        alerts_list.insert(0, {"timestamp": timestamp, "alerts": ["✅ System running optimally."]})
+
+    # Keep only the last 10 alerts
+    alerts_list = alerts_list[:10]
+
+    # Write to InfluxDB
     write_api = client_influx.write_api()
     write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
 
@@ -62,12 +92,17 @@ mqtt_client.loop_start()
 def read_root():
     return {"message": "Indoor Farm System API is running"}
 
+# ✅ API to fetch latest alerts
+@app.get("/alerts")
+def get_alerts():
+    return {"alerts": alerts_list}
+
 # ✅ API to get the **latest** sensor data
 @app.get("/latest")
 def get_latest_sensor_data():
     query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -5m)  // Get last 5 minutes
+      |> range(start: -5m)  
       |> filter(fn: (r) => r["_measurement"] == "sensor_reading")
       |> last()
     """
@@ -85,32 +120,10 @@ def get_latest_sensor_data():
                 "value": record.get_value()
             })
 
+    if not data:
+        return {"message": "No sensor data found."}
+
     return {"latest_readings": data}
-
-# ✅ API to fetch data for graphs (last 30 minutes)
-@app.get("/graph-data")
-def get_graph_data():
-    query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -30m)
-      |> filter(fn: (r) => r["_measurement"] == "sensor_reading")
-    """
-    
-    try:
-        result = query_api.query(org=INFLUXDB_ORG, query=query)
-    except Exception as e:
-        return {"error": f"Failed to fetch graph data: {str(e)}"}
-    
-    data = []
-    for table in result:
-        for record in table.records:
-            data.append({
-                "time": record.get_time().isoformat(),
-                "field": record.get_field(),
-                "value": record.get_value()
-            })
-
-    return {"graph_data": data}
 
 # ✅ Start FastAPI (only when running this script directly)
 if __name__ == "__main__":

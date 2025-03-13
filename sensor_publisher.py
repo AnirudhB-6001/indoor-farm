@@ -27,4 +27,4 @@ while True:
     payload = json.dumps(sensor_data)
     client.publish(MQTT_TOPIC, payload)
     print(f"Published: {payload}")
-    time.sleep(20)  # Send data every 20 seconds
+    time.sleep(5)  # Send data every 5 seconds
