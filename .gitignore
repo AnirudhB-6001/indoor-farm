@@ -1,0 +1,15 @@
+# Ignore Python virtual environments
+venv/
+__pycache__/
+
+# Ignore Node.js dependencies
+indoor-farm-dashboard/node_modules/
+
+# Ignore IDE-specific and system files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Ignore Git tracking of previously committed node_modules or venv (Run `git rm -r --cached venv node_modules` first)
